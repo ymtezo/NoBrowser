@@ -9,11 +9,7 @@ import android.content.Intent
 import android.view.Menu
 import android.view.MenuItem
 import androidx.appcompat.widget.Toolbar
-import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Build
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import android.app.DownloadManager
 import android.os.Environment
 import android.net.Uri
@@ -26,26 +22,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var urlTextView: TextView
     private lateinit var toolbarTitle: TextView
 
-    private val REQUEST_CODE = 1
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        // Check for permissions
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                    REQUEST_CODE
-                )
-            }
-        }
 
         // Set up the Toolbar
         val toolbar: Toolbar = findViewById(R.id.toolbar)
@@ -54,8 +33,15 @@ class MainActivity : AppCompatActivity() {
         //Initialize WebView
         myWebView = findViewById(R.id.webview)
 
-        // Enable JavaScript if needed
-        myWebView.settings.javaScriptEnabled = true
+        // Security: Disable file and content access
+        myWebView.settings.apply {
+            javaScriptEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                safeBrowsingEnabled = true
+            }
+        }
 
         // Set up the WebViewClient to update the URL in the Toolbar
         myWebView.webViewClient = object : WebViewClient() {
@@ -72,15 +58,22 @@ class MainActivity : AppCompatActivity() {
 
             // Setting the download file type
             request.setMimeType(mimeType)
-            // Tells the system to scan the downloaded file when completed
-            request.allowScanningByMediaScanner()
             request.addRequestHeader("User-Agent", userAgent)
             request.setDescription("Downloading file...")
-            request.setTitle(contentDisposition)
+            
+            // Security: Sanitize filename to prevent path traversal
+            val fileName = contentDisposition.substringAfter("filename=", "downloaded_file")
+                .replace("\"", "")
+                .substringAfterLast("/")
+                .substringAfterLast("\\")
+
+            request.setTitle(fileName)
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            
+            // On Android 10+, WRITE_EXTERNAL_STORAGE is not required for DIRECTORY_DOWNLOADS using DownloadManager
             request.setDestinationInExternalPublicDir(
                 Environment.DIRECTORY_DOWNLOADS,
-                contentDisposition.substringAfter("filename=").replace("\"", "")
+                fileName
             )
 
             val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -94,8 +87,16 @@ class MainActivity : AppCompatActivity() {
         val intent = intent
         val action = intent.action
         val data = intent.data
+        
         if (action == Intent.ACTION_VIEW && data != null) {
-            myWebView.loadUrl(data.toString())
+            val scheme = data.scheme
+            // Security: Only allow http and https schemes
+            if (scheme == "http" || scheme == "https") {
+                myWebView.loadUrl(data.toString())
+            } else {
+                Toast.makeText(this, "Unsupported URL scheme", Toast.LENGTH_SHORT).show()
+                myWebView.loadUrl("https://altl.io/")
+            }
         } else {
             // Load a default URL if no intent data is received
             myWebView.loadUrl("https://altl.io/")
